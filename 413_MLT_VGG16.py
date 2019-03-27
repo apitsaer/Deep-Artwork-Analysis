@@ -23,7 +23,7 @@ import keras
 from keras.models import Model, load_model
 from keras import Input, layers, callbacks
 from keras.preprocessing import image
-#from keras import backend as K
+from keras.applications import  VGG16
 
 import matplotlib.pyplot as plt
 
@@ -35,8 +35,9 @@ warnings.filterwarnings('ignore')
 IMG_SIZE = 200
 DIR = '../../data/TestSetA/'
 INPUT_FILE = 'AWTableSetA.csv'
-BATCH_SIZE = 32
+BATCH_SIZE = 20
 N_EPOCHS = 100
+OUTPUT_PLOTS = 'VGG16'
 
 # get some statistics on the original image size in order to determine acceptable resizing
 def get_IMG_size_statistics(DIR):
@@ -82,29 +83,32 @@ def genDataSets(AWTable):
 def learnModelMulti(n_iter, batch_size = 20):
     
     image_input = Input(shape=(IMG_SIZE, IMG_SIZE, 3), name='image')
-    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(image_input)
-    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-    x = layers.BatchNormalization()(x)
+    conv_base = VGG16(weights='imagenet', include_top=False, input_shape=(IMG_SIZE, IMG_SIZE, 3))(image_input)
     
-    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
-    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-    x = layers.BatchNormalization()(x)
+#    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(image_input)
+#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
+#    x = layers.BatchNormalization()(x)
+#    
+#    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
+#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
+#    x = layers.BatchNormalization()(x)
+#    
+#    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
+#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
+#    x = layers.BatchNormalization()(x)
+#
+#    x = layers.Conv2D(96, kernel_size = (3, 3), activation='relu')(x)
+#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
+#    x = layers.BatchNormalization()(x)
+#
+#    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(x)
+#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
+#    x = layers.BatchNormalization()(x)
+#    
+#    x = layers.Dropout(0.2)(x)
     
-    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
-    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-    x = layers.BatchNormalization()(x)
-
-    x = layers.Conv2D(96, kernel_size = (3, 3), activation='relu')(x)
-    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-    x = layers.BatchNormalization()(x)
-
-    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(x)
-    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-    x = layers.BatchNormalization()(x)
-    
-    x = layers.Dropout(0.2)(x)
     x = layers.Flatten()(conv_base)
-    x= layers.Dense(128, activation='relu')(x)
+    x= layers.Dense(256, activation='relu')(x)
         
     artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(x)
     year_prediction = layers.Dense(1, name='year')(x) # regression hence no activation function
@@ -122,6 +126,8 @@ def learnModelMulti(n_iter, batch_size = 20):
     print('This is the number of trainable weights '
           'after freezing the conv base:', len(model.trainable_weights))
         
+    model.summary()
+
     model.compile(optimizer='adam',
                   loss={'artist': 'categorical_crossentropy', 'year': 'mae', 'type': 'binary_crossentropy', 'mat': 'binary_crossentropy'},
                   loss_weights={'artist': 1, 'year': 1, 'type': 1, 'mat': 1},
@@ -174,7 +180,7 @@ def learnModelMulti(n_iter, batch_size = 20):
     axs[0, 0].plot(epochs, artist_acc, 'b', label='Train')
     axs[0, 0].plot(epochs, val_artist_acc, 'r', label='Val')
     axs[0, 0].set_title('Artist')
-    axs[0, 0].set_ylabel('Acc')
+    axs[0, 1].set_ylabel('Acc')
     axs[0, 0].legend()
 
     axs[0, 1].plot(epochs, year_mae, 'b', label='Train')
@@ -185,14 +191,14 @@ def learnModelMulti(n_iter, batch_size = 20):
 
     axs[1, 0].plot(epochs, type_precision, 'b', label='Train')
     axs[1, 0].plot(epochs, val_type_precision, 'r', label='Val')
-    axs[1, 0].set_title('Type')
+    axs[0, 1].set_title('Type')
     axs[1, 0].set_ylabel('Precision')
     axs[1, 0].legend()
 
     axs[1, 1].plot(epochs, mat_precision, 'b', label='Train')
     axs[1, 1].plot(epochs, val_mat_precision, 'r', label='Val')
-    axs[1, 1].set_title('Material')
-    axs[1, 1].set_ylabel('Precision')
+    axs[0, 1].set_title('Material')
+    axs[1, 0].set_ylabel('Precision')
     axs[1, 1].legend()
   
     for ax in axs.flat:
@@ -201,25 +207,8 @@ def learnModelMulti(n_iter, batch_size = 20):
     for ax in axs.flat:
         ax.label_outer()
         
-    plt.savefig('MLT Train_valid_accuracy')
+    plt.savefig('OUTPUT_PLOTS')
     plt.show()
-    
-#    loss, artist_loss, type_loss, artist_acc, type_precision = model.evaluate_generator(test_gen,
-#                                                                                  steps = ceil(test_set.shape[0]/batch_size))
-#    
-#    print('model.metrics_names = ' +  ' '.join(model.metrics_names))
-#    print('test_artist_acc = ' + str(artist_acc))
-#    print('test_type_acc = ' + str(type_precision))
-    
-#def precision(y_true, y_pred):
-#    '''Calculates the precision, a metric for multi-label classification of
-#    how many selected items are relevant.
-#    '''
-#    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-#    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-#    precision = true_positives / (predicted_positives + K.epsilon())
-#    return precision
-
     
 def testModelMulti(batch_size = 20):
     
