@@ -21,13 +21,16 @@ from math import ceil
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
 
-from keras.models import load_model
+import keras
+from keras.models import Model, load_model
+from keras import Input, layers, callbacks
+import matplotlib.pyplot as plt
 
 import warnings
 warnings.filterwarnings('ignore')
 
 IMG_SIZE = 200
-DIR = '../data/TestSetA/'
+DIR = '../../data/TestSetA/'
 INPUT_FILE = 'AWTableSetA.csv'
 BATCH_SIZE = 32
 N_EPOCHS = 30
@@ -72,11 +75,6 @@ def genDataSets(AWTable):
 
 
 def learnModelMulti(n_iter, batch_size = 20):
-
-    from keras.models import Model
-    from keras import layers
-    from keras import Input
-    import matplotlib.pyplot as plt
     
     image_input = Input(shape=(IMG_SIZE, IMG_SIZE, 3), name='image')
     x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(image_input)
@@ -104,15 +102,17 @@ def learnModelMulti(n_iter, batch_size = 20):
     x= layers.Dense(128, activation='relu')(x)
         
     artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(x)
-    type_prediction = layers.Dense(nClassesType, activation='softmax', name='type')(x)
+    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(x)
+#    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(x)
     model = Model(image_input,[artist_prediction, type_prediction])
     model.summary()
         
     model.compile(optimizer='adam',
-                  loss={'artist': 'binary_crossentropy','type': 'binary_crossentropy'},
+                  loss={'artist': 'categorical_crossentropy','type': 'binary_crossentropy'},
                   loss_weights={'artist': 1, 'type': 1},
                   metrics={'artist': 'accuracy', 'type': 'accuracy'})
     
+#   Code to use Keras built in data augm
 #    aug = ImageDataGenerator(rotation_range=20, zoom_range=0.15,
 #                             width_shift_range=0.2, height_shift_range=0.2, shear_range=0.15,
 #                             horizontal_flip=True, fill_mode="nearest")
@@ -121,11 +121,16 @@ def learnModelMulti(n_iter, batch_size = 20):
     valid_gen = data_generator(valid_set, IMG_SIZE, IMG_SIZE, batch_size, dataAugm=False)
     test_gen = data_generator(test_set, IMG_SIZE, IMG_SIZE, batch_size, dataAugm=False)
     
+    callbacks = [keras.callbacks.TensorBoard(log_dir='../logs',
+                                             histogram_freq=1,
+                                             embeddings_freq=1)]    
+
     history = model.fit_generator(train_gen, 
                         validation_data = valid_gen,  
                         validation_steps = ceil(valid_set.shape[0] / batch_size),
                         steps_per_epoch = 2 * ceil(train_set.shape[0] / batch_size),
                         epochs = n_iter, verbose = 1)
+                        #callbacks=callbacks)
 
     model.save('artistsRD.h5')
  
@@ -210,19 +215,19 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
               path = os.path.join(dir_img, Id +".jpg")
               img = Image.open(path)
               img = img.resize((IMG_SIZE, IMG_SIZE), Image.ANTIALIAS)
-              batch_image.append(np.array(img) / 255)
+              batch_image.append(np.array(img))
               batch_target_artist.append(artist)
-              batch_target_type.append(getTypes(types))
-              batch_target_mat.append(getTypes(mats))
+              batch_target_type.append(stringToList(types))
+              batch_target_mat.append(stringToList(mats))
               if(dataAugm):
                   # Basic Data Augmentation - Horizontal Flipping
                   flip_img = img
                   flip_img = np.array(flip_img)
                   flip_img = np.fliplr(flip_img)
-                  batch_image.append(np.array(flip_img) / 255)
+                  batch_image.append(np.array(flip_img))
                   batch_target_artist.append(artist)
-                  batch_target_type.append(getTypes(types))
-                  batch_target_mat.append(getTypes(mats))
+                  batch_target_type.append(stringToList(types))
+                  batch_target_mat.append(stringToList(mats))
           
           batch_image = np.array( batch_image) / 255
           batch_target_artist = np.array( batch_target_artist ).reshape(-1,1)
@@ -235,7 +240,7 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
           iBatch += 1
           if(iBatch == steps_per_epoch): iBatch = 0
           
-def getTypes(text):
+def stringToList(text):
     types = []
     text_type = re.split(";", text)
     for typ in text_type:
@@ -268,13 +273,14 @@ print("*****    1. Generating data sets")
 AWTableTOP = pd.read_csv(DIR + INPUT_FILE, keep_default_na=False)
 AWTableTOP.set_index("Id", inplace=True)
 AWTableTOP.columns = AWTableTOP.columns.str.strip() #remove leading and trailing white space if n
-nClassesArtist = AWTableTOP['Artist'].nunique()
-nClassesType = AWTableTOP['Type'].nunique()
 
 (all_Types, all_Mats) = getAllTypeMat(AWTableTOP)
+nClassesArtist = AWTableTOP['Artist'].nunique()
+nClassesType = len(all_Types)
+nClassesMat = len(all_Mats)
 
-print('Found {} uniaue Type'.format(len(all_Types)))
-print('Found {} uniaue Material'.format(len(all_Mats)))
+print('Found {} uniaue Type'.format(nClassesType))
+print('Found {} uniaue Material'.format(nClassesMat))
 
 (train_set, valid_set, test_set) = genDataSets(AWTableTOP)
 
@@ -295,10 +301,12 @@ encoder_Artist.fit(all_Artists)
 
 print("*****    2. Learning and evaluating on test set")
 
-#learnModelMulti(N_EPOCHS, BATCH_SIZE)
+learnModelMulti(N_EPOCHS, BATCH_SIZE)
 #testModelMulti(BATCH_SIZE)
 
 # To DO 
+# implement "Mean Average Precision"for multi label
+# Artist in OmniArt: The evaluation block for this task contains a softmax layer and class-wise weight matrix for unbalanced data splits
 # implement full multi task
 # implement RESNET 50
 # implement callback and logs
@@ -309,15 +317,15 @@ print("*****    2. Learning and evaluating on test set")
 
 # implement step decay
 
-# =============================================================================
-train_gen = data_generator(train_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
+# ======== CODE to DEBUG the generator =======================================
+#train_gen = data_generator(train_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # valid_gen = data_generator(valid_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # test_gen = data_generator(test_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # steps_per_epoch = ceil(valid_set.shape[0] / BATCH_SIZE)
 #for i in range(1,2*(40+1)):
 #    print('*************** Step : ' + str(i))
 #    (batch_image, dicto) = next(train_gen)
-#    print(dicto.get('type')[0])
+#    print(dicto.get('type')[1])
 # 
 # =============================================================================
 
