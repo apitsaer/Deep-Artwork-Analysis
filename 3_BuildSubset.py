@@ -10,9 +10,9 @@ import matplotlib as plt
 import seaborn as sns
 import pandas as pd
 
-SOURCE_DIR = "../data/jpg2"
-SOURCE_TABLE = "../data/AWTable.csv""
-DEST_DIR = "../data/TestSetAT/original"
+SOURCE_DIR = "../../data/jpg2"
+SOURCE_TABLE = "../../data/AWTable.csv"
+DEST_DIR = "../../data/TestSetAT/original"
 
 def generateArtistsold():
     for row in AWTable.itertuples():

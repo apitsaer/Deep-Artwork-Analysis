@@ -24,7 +24,10 @@ from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
 import keras
 from keras.models import Model, load_model
 from keras import Input, layers, callbacks
+
 import matplotlib.pyplot as plt
+
+import CustomMetrics as cm
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -35,8 +38,7 @@ INPUT_FILE = 'AWTableSetA.csv'
 BATCH_SIZE = 32
 N_EPOCHS = 30
 
-#naming_dict = {} # AW id: artist
-
+# get some statistics on the original image size in order to determine acceptable resizing
 def get_IMG_size_statistics(DIR):
     heights = []
     widths = []
@@ -58,6 +60,8 @@ def get_IMG_size_statistics(DIR):
     print("Max Width: " + str(max(widths)))
     print("Min Width: " + str(min(widths)))
     
+# generating training, validation and test data sets with stratified shuffle split
+# using Artists as key attribute for the stratification    
 def genDataSets(AWTable):
     
     split = StratifiedShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
@@ -102,15 +106,17 @@ def learnModelMulti(n_iter, batch_size = 20):
     x= layers.Dense(128, activation='relu')(x)
         
     artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(x)
+    year_prediction = layers.Dense(1, name='year')(x) # regression hence no activation function
     type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(x)
-#    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(x)
-    model = Model(image_input,[artist_prediction, type_prediction])
+    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(x)
+
+    model = Model(image_input,[artist_prediction, year_prediction, type_prediction, mat_prediction])
     model.summary()
         
     model.compile(optimizer='adam',
-                  loss={'artist': 'categorical_crossentropy','type': 'binary_crossentropy'},
-                  loss_weights={'artist': 1, 'type': 1},
-                  metrics={'artist': 'accuracy', 'type': 'accuracy'})
+                  loss={'artist': 'categorical_crossentropy', 'year': 'mae', 'type': 'binary_crossentropy', 'mat': 'binary_crossentropy'},
+                  loss_weights={'artist': 1, 'year': 1, 'type': 1, 'mat': 1},
+                  metrics={'artist': 'accuracy', 'year': 'mae', 'type': cm.precision, 'mat': cm.precision})
     
 #   Code to use Keras built in data augm
 #    aug = ImageDataGenerator(rotation_range=20, zoom_range=0.15,
@@ -134,10 +140,16 @@ def learnModelMulti(n_iter, batch_size = 20):
 
     model.save('artistsRD.h5')
  
-    type_acc = history.history['type_acc']
-    val_type_acc = history.history['val_type_acc']
+    type_precision = history.history['type_precision']
+    val_type_precision = history.history['val_type_precision']
     type_loss = history.history['type_loss']
     val_type_loss = history.history['val_type_loss']
+
+    mat_precision = history.history['mat_precision']
+    val_mat_precision = history.history['val_mat_precision']
+    mat_loss = history.history['mat_loss']
+    val_mat_loss = history.history['val_mat_loss']
+
     artist_acc = history.history['artist_acc']
     val_artist_acc = history.history['val_artist_acc']
     artist_loss = history.history['artist_loss']
@@ -145,24 +157,24 @@ def learnModelMulti(n_iter, batch_size = 20):
     epochs = range(1, len(artist_acc) + 1)
     
     fig, axs = plt.subplots(2, 2)
-    axs[0, 0].plot(epochs, type_acc, 'bo', label='Type - Train acc')
-    axs[0, 0].plot(epochs, val_type_acc, 'ro', label='Type - Val acc')
+    axs[0, 0].plot(epochs, type_precision, 'b', label='Train')
+    axs[0, 0].plot(epochs, val_type_precision, 'r', label='Val')
     axs[0, 0].set_title('Type')
     axs[0, 0].set_ylabel('Acc')
     axs[0, 0].legend()
 
-    axs[0, 1].plot(epochs, artist_acc, 'bo', label='Artist - Train acc')
-    axs[0, 1].plot(epochs, val_artist_acc, 'ro', label='Artist - Val acc')
+    axs[0, 1].plot(epochs, artist_acc, 'b', label='Train')
+    axs[0, 1].plot(epochs, val_artist_acc, 'r', label='Val')
     axs[0, 1].set_title('Artist')
     axs[0, 1].legend()
 
-    axs[1, 0].plot(epochs, type_loss, 'bo', label='Type - Train loss')
-    axs[1, 0].plot(epochs, val_type_loss, 'ro', label='Type - Val loss')
+    axs[1, 0].plot(epochs, type_loss, 'b', label='Train')
+    axs[1, 0].plot(epochs, val_type_loss, 'r', label='Val')
     axs[1, 0].set_ylabel('Loss')
     axs[1, 0].legend()
 
-    axs[1, 1].plot(epochs, artist_loss, 'bo', label='Artist - Train loss')
-    axs[1, 1].plot(epochs, val_artist_loss, 'ro', label='Artist - Val loss')
+    axs[1, 1].plot(epochs, artist_loss, 'b', label='Train')
+    axs[1, 1].plot(epochs, val_artist_loss, 'r', label='Val')
     axs[1, 1].legend()
   
     for ax in axs.flat:
@@ -172,28 +184,29 @@ def learnModelMulti(n_iter, batch_size = 20):
     for ax in axs.flat:
         ax.label_outer()
         
-    plt.savefig('NEW Train_valid_accuracy')
+    plt.savefig('MLT Train_valid_accuracy')
     plt.show()
     
-    loss, artist_loss, type_loss, artist_acc, type_acc = model.evaluate_generator(test_gen,
-                                                                                  steps = ceil(test_set.shape[0]/batch_size))
-    
-    print('model.metrics_names = ' +  ' '.join(model.metrics_names))
-    print('test_artist_acc = ' + str(artist_acc))
-    print('test_type_acc = ' + str(type_acc))
+#    loss, artist_loss, type_loss, artist_acc, type_precision = model.evaluate_generator(test_gen,
+#                                                                                  steps = ceil(test_set.shape[0]/batch_size))
+#    
+#    print('model.metrics_names = ' +  ' '.join(model.metrics_names))
+#    print('test_artist_acc = ' + str(artist_acc))
+#    print('test_type_acc = ' + str(type_precision))
     
 def testModelMulti(batch_size = 20):
     
     model = load_model('artistsRD.h5')
     test_gen = data_generator(test_set, IMG_SIZE, IMG_SIZE, batch_size)
-    loss, artist_loss, type_loss, artist_acc, type_acc = model.evaluate_generator(test_gen, 
+    
+    loss, artist_loss, year_loss, type_loss, mat_loss, artist_acc, type_precision = model.evaluate_generator(test_gen, 
                                                                                   steps = ceil(test_set.shape[0]/batch_size))
     
     print('model.metrics_names = ' +  ' '.join(model.metrics_names))
     print('test_artist_acc = ' + str(artist_acc))
-    print('test_type_acc = ' + str(type_acc))
-    
+    print('test_type_acc = ' + str(type_precision))
 
+# Custom data generator to provide batch of labelized data
 def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=False):
        
      dir_img = DIR + 'original'
@@ -205,11 +218,13 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
           batch_Id = data_set.iloc[iBatch * batch_size : (iBatch+1) * batch_size].index
           batch_image = []
           batch_target_artist = [] 
+          batch_target_year = []
           batch_target_type = []
           batch_target_mat = []
 
           for Id in batch_Id:
               artist = AWTableTOP.loc[Id].Artist
+              year = AWTableTOP.loc[Id].Year_Est
               types = AWTableTOP.loc[Id].Type_all
               mats = AWTableTOP.loc[Id].Material_all
               path = os.path.join(dir_img, Id +".jpg")
@@ -217,6 +232,7 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
               img = img.resize((IMG_SIZE, IMG_SIZE), Image.ANTIALIAS)
               batch_image.append(np.array(img))
               batch_target_artist.append(artist)
+              batch_target_year.append(year)
               batch_target_type.append(stringToList(types))
               batch_target_mat.append(stringToList(mats))
               if(dataAugm):
@@ -226,6 +242,7 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
                   flip_img = np.fliplr(flip_img)
                   batch_image.append(np.array(flip_img))
                   batch_target_artist.append(artist)
+                  batch_target_year.append(year)
                   batch_target_type.append(stringToList(types))
                   batch_target_mat.append(stringToList(mats))
           
@@ -233,10 +250,13 @@ def data_generator(data_set, img_height,img_width, batch_size = 20, dataAugm=Fal
           batch_target_artist = np.array( batch_target_artist ).reshape(-1,1)
           batch_target_artist = encoder_Artist.transform(batch_target_artist)
 
+          batch_target_year = np.array( batch_target_year ).reshape(-1,1)
+
           batch_target_type = encoder_Type.transform(batch_target_type)
+
           batch_target_mat = encoder_Mat.transform(batch_target_mat)
           
-          yield(batch_image, {'artist': batch_target_artist, 'type': batch_target_type} )
+          yield(batch_image, {'artist': batch_target_artist, 'year': batch_target_year,'type': batch_target_type, 'mat': batch_target_mat} )
           iBatch += 1
           if(iBatch == steps_per_epoch): iBatch = 0
           
@@ -272,7 +292,18 @@ def getAllTypeMat(AWTableTOP):
 print("*****    1. Generating data sets")
 AWTableTOP = pd.read_csv(DIR + INPUT_FILE, keep_default_na=False)
 AWTableTOP.set_index("Id", inplace=True)
-AWTableTOP.columns = AWTableTOP.columns.str.strip() #remove leading and trailing white space if n
+AWTableTOP.columns = AWTableTOP.columns.str.strip() #remove leading and trailing white space if any
+
+# creating Year data field with integer equal to mean value of interval
+AWTableTOP.insert(3, 'Year_Est', 0)
+AWTableTOP.Year_Est = AWTableTOP.Year_Est.astype(float)
+for idx, row in AWTableTOP.iterrows():
+    year_string = row.Year
+    year_split = [int(s) for s in year_string.split() if s.isdigit()]
+    if(len(year_split) == 1): year_clean = year_split[0]
+    if(len(year_split) == 2): year_clean = (year_split[0] + year_split[1]) / 2
+    else: year_clean = 0 # TO DO : alos throw an exception
+    AWTableTOP.set_value(idx, 'Year_Est', year_clean)
 
 (all_Types, all_Mats) = getAllTypeMat(AWTableTOP)
 nClassesArtist = AWTableTOP['Artist'].nunique()
@@ -302,10 +333,9 @@ encoder_Artist.fit(all_Artists)
 print("*****    2. Learning and evaluating on test set")
 
 learnModelMulti(N_EPOCHS, BATCH_SIZE)
-#testModelMulti(BATCH_SIZE)
+testModelMulti(BATCH_SIZE)
 
 # To DO 
-# implement "Mean Average Precision"for multi label
 # Artist in OmniArt: The evaluation block for this task contains a softmax layer and class-wise weight matrix for unbalanced data splits
 # implement full multi task
 # implement RESNET 50
@@ -318,7 +348,7 @@ learnModelMulti(N_EPOCHS, BATCH_SIZE)
 # implement step decay
 
 # ======== CODE to DEBUG the generator =======================================
-#train_gen = data_generator(train_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
+train_gen = data_generator(train_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # valid_gen = data_generator(valid_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # test_gen = data_generator(test_set, IMG_SIZE, IMG_SIZE, BATCH_SIZE)
 # steps_per_epoch = ceil(valid_set.shape[0] / BATCH_SIZE)
