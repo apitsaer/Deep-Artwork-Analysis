@@ -104,7 +104,7 @@ def learnModelMulti(n_iter, batch_size = 20):
     
     x = layers.Dropout(0.2)(x)
     x = layers.Flatten()(conv_base)
-    x= layers.Dense(128, activation='relu')(x)
+    x= layers.Dense(2048, activation='relu')(x)
         
     artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(x)
     year_prediction = layers.Dense(1, name='year')(x) # regression hence no activation function

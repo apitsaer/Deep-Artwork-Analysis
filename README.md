@@ -1,1 +1,0 @@
-# Deep Artwork Analysis

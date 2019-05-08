@@ -117,7 +117,7 @@ def parseXmlFile(fullname):
 
 def main():
     
-    directory = '../data/xml2'
+    directory = '../data/1_original/xml'
     print("Parsing xml files in directory " + directory)
     for currentFile in os.listdir(directory):  
         if str(currentFile).endswith('.xml'):
@@ -127,7 +127,7 @@ def main():
             count = count + 1
             parseXmlFile(os.path.join(directory, currentFile))
 
-    AWTable.to_csv("../data/AWTable.csv", index=False, encoding='utf8')
+    AWTable.to_csv("../data/2.meta_files/AWTable.csv", index=False, encoding='utf8')
     print("Max # Artist element / AW in xml = " +  str(MaxArtist))
     print("Max # Year element / AW in xml = " +  str(MaxYear))
     print("Max # Material element / AW in xml = " +  str(MaxMaterial))

@@ -23,7 +23,7 @@ import keras
 from keras.models import Model, load_model
 from keras import Input, layers, callbacks
 from keras.preprocessing import image
-from keras.applications import  VGG16
+from keras import applications
 
 import matplotlib.pyplot as plt
 
@@ -36,7 +36,7 @@ IMG_SIZE = 200
 DIR = '../../data/TestSetA/'
 INPUT_FILE = 'AWTableSetA.csv'
 BATCH_SIZE = 20
-N_EPOCHS = 100
+N_EPOCHS = 30
 OUTPUT_PLOTS = 'VGG16'
 
 # get some statistics on the original image size in order to determine acceptable resizing
@@ -82,61 +82,39 @@ def genDataSets(AWTable):
 
 def learnModelMulti(n_iter, batch_size = 20):
     
-    image_input = Input(shape=(IMG_SIZE, IMG_SIZE, 3), name='image')
-    conv_base = VGG16(weights='imagenet', include_top=False, input_shape=(IMG_SIZE, IMG_SIZE, 3))(image_input)
+    base_model = applications.VGG16(weights='imagenet', include_top=False, input_shape=(IMG_SIZE, IMG_SIZE, 3))
     
-#    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(image_input)
-#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-#    x = layers.BatchNormalization()(x)
-#    
-#    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
-#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-#    x = layers.BatchNormalization()(x)
-#    
-#    x = layers.Conv2D(64, kernel_size = (3, 3), activation='relu')(x)
-#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-#    x = layers.BatchNormalization()(x)
-#
-#    x = layers.Conv2D(96, kernel_size = (3, 3), activation='relu')(x)
-#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-#    x = layers.BatchNormalization()(x)
-#
-#    x = layers.Conv2D(32, kernel_size = (3, 3), activation='relu')(x)
-#    x = layers.MaxPooling2D(pool_size=(2,2))(x)
-#    x = layers.BatchNormalization()(x)
-#    
-#    x = layers.Dropout(0.2)(x)
+    print('***** Base model loaded:')
+    base_model.summary()
+
+    n_layers_base = len(base_model.layers)
+    last_layer_base_model = base_model.get_layer(index = n_layers_base - 1).output
+    flatten_base_model = layers.Flatten()(last_layer_base_model)
+
+    MLT_shared_repr = layers.Dense(256, activation='relu')(flatten_base_model)        
+    artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(MLT_shared_repr)
+    year_prediction = layers.Dense(1, name='year')(MLT_shared_repr) # regression hence no activation function
+    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(MLT_shared_repr)
+    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(MLT_shared_repr)
+
+    custom_model = Model(base_model.input,[artist_prediction, year_prediction, type_prediction, mat_prediction])
     
-    x = layers.Flatten()(conv_base)
-    x= layers.Dense(256, activation='relu')(x)
+    print("***** Full model")
+    custom_model.summary()
+    
+    print('# trainable weights '
+          'before freezing the conv base:', len(custom_model.trainable_weights))
+    
+    for layer in custom_model.layers[:n_layers_base - 1]:
+        layer.trainable = False
+
+    print('# trainable weights '
+          'after freezing the conv base:', len(custom_model.trainable_weights))
         
-    artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(x)
-    year_prediction = layers.Dense(1, name='year')(x) # regression hence no activation function
-    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(x)
-    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(x)
-
-    model = Model(image_input,[artist_prediction, year_prediction, type_prediction, mat_prediction])
-    model.summary()
-    
-    print('This is the number of trainable weights '
-          'before freezing the conv base:', len(model.trainable_weights))
-    
-    conv_base.trainable = False
-
-    print('This is the number of trainable weights '
-          'after freezing the conv base:', len(model.trainable_weights))
-        
-    model.summary()
-
-    model.compile(optimizer='adam',
+    custom_model.compile(optimizer='adam',
                   loss={'artist': 'categorical_crossentropy', 'year': 'mae', 'type': 'binary_crossentropy', 'mat': 'binary_crossentropy'},
                   loss_weights={'artist': 1, 'year': 1, 'type': 1, 'mat': 1},
                   metrics={'artist': 'accuracy', 'year': 'mae', 'type': cm.precision, 'mat': cm.precision})
-    
-#   Code to use Keras built in data augm
-#    aug = ImageDataGenerator(rotation_range=20, zoom_range=0.15,
-#                             width_shift_range=0.2, height_shift_range=0.2, shear_range=0.15,
-#                             horizontal_flip=True, fill_mode="nearest")
     
     train_gen = data_generator(train_set, IMG_SIZE, IMG_SIZE, batch_size, dataAugm=True)
     valid_gen = data_generator(valid_set, IMG_SIZE, IMG_SIZE, batch_size, dataAugm=False)
@@ -146,14 +124,14 @@ def learnModelMulti(n_iter, batch_size = 20):
                                              histogram_freq=1,
                                              embeddings_freq=1)]    
 
-    history = model.fit_generator(train_gen, 
+    history = custom_model.fit_generator(train_gen, 
                         validation_data = valid_gen,  
                         validation_steps = ceil(valid_set.shape[0] / batch_size),
                         steps_per_epoch = 2 * ceil(train_set.shape[0] / batch_size),
                         epochs = n_iter, verbose = 1)
                         #callbacks=callbacks)
 
-    model.save('artistsRD.h5')
+    custom_model.save('artistsRD.h5')
  
     type_precision = history.history['type_precision']
     val_type_precision = history.history['val_type_precision']
@@ -316,15 +294,17 @@ AWTableTOP.set_index("Id", inplace=True)
 AWTableTOP.columns = AWTableTOP.columns.str.strip() #remove leading and trailing white space if any
 
 # creating Year data field with integer equal to mean value of interval
-AWTableTOP.insert(3, 'Year_Est', 0)
-AWTableTOP.Year_Est = AWTableTOP.Year_Est.astype(float)
-for idx, row in AWTableTOP.iterrows():
-    year_string = row.Year
-    year_split = [int(s) for s in year_string.split() if s.isdigit()]
-    if(len(year_split) == 1): year_clean = year_split[0]
-    if(len(year_split) == 2): year_clean = (year_split[0] + year_split[1]) / 2
-    else: year_clean = 1700 # TO DO : alos throw an exception
-    AWTableTOP.set_value(idx, 'Year_Est', year_clean)
+# =============================================================================
+# AWTableTOP.insert(3, 'Year_Est', 0)
+# AWTableTOP.Year_Est = AWTableTOP.Year_Est.astype(float)
+# for idx, row in AWTableTOP.iterrows():
+#     year_string = row.Year
+#     year_split = [int(s) for s in year_string.split() if s.isdigit()]
+#     if(len(year_split) == 1): year_clean = year_split[0]
+#     if(len(year_split) == 2): year_clean = (year_split[0] + year_split[1]) / 2
+#     else: year_clean = 1700 # TO DO : alos throw an exception
+#     AWTableTOP.set_value(idx, 'Year_Est', year_clean)
+# =============================================================================
 
 (all_Types, all_Mats) = getAllTypeMat(AWTableTOP)
 nClassesArtist = AWTableTOP['Artist'].nunique()
@@ -388,4 +368,11 @@ testModelMulti(BATCH_SIZE)
 #     ## invert first example
 #     inverted = label_encoder.inverse_transform([argmax(onehot_encoded[0, :])])
 #     print(inverted)
+
+#   Code to use Keras built in data augm
+#    aug = ImageDataGenerator(rotation_range=20, zoom_range=0.15,
+#                             width_shift_range=0.2, height_shift_range=0.2, shear_range=0.15,
+#                             horizontal_flip=True, fill_mode="nearest")
+    
+
  
