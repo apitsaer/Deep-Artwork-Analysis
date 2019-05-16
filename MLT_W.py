@@ -24,7 +24,7 @@ from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer, MinMaxScal
 
 import keras
 from keras.models import Model, load_model
-from keras import Input, layers, callbacks, applications, optimizers
+from keras import Input, layers, callbacks, applications, optimizers, regularizers
 from keras.preprocessing import image
 from keras import backend as K
 
@@ -61,11 +61,30 @@ def learnModelMulti():
         K.set_learning_phase(1) # set model to training mode manually (required for BN layers)
         
     MLT_shared_repr = layers.Dense(NUM_HIDDEN_UNITS, activation='relu', name='shared_repr')(x)        
-    drop_out = layers.Dropout(0.5)(MLT_shared_repr)
-    artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(drop_out)
-    year_prediction = layers.Dense(1, name='year')(drop_out) # regression hence no activation function
-    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(drop_out)
-    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(drop_out)
+    drop_out_layer = layers.Dropout(DROPOUT)(MLT_shared_repr)
+    artist_prediction = layers.Dense(nClassesArtist, kernel_regularizer=regularizers.l2(0.001), activation='softmax', name='artist')(drop_out_layer)
+    year_prediction = layers.Dense(1, name='year')(drop_out_layer) # regression hence no activation function
+    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(drop_out_layer)
+    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(drop_out_layer)
+
+#    MLT_shared_repr = layers.Dense(NUM_HIDDEN_UNITS, activation='relu', name='shared_repr')(x)        
+#    MLT_shared_repr = layers.Dropout(0.5)(MLT_shared_repr)
+#
+#    artist_prediction = layers.Dense(300, activation='relu', name='artist_h')(MLT_shared_repr)
+#    artist_prediction = layers.Dropout(0.5)(artist_prediction)
+#    artist_prediction = layers.Dense(nClassesArtist, activation='softmax', name='artist')(artist_prediction)
+#    
+#    year_prediction = layers.Dense(300, activation='relu', name='year_h')(MLT_shared_repr) # regression hence no activation function
+#    year_prediction = layers.Dropout(0.5)(year_prediction)
+#    year_prediction = layers.Dense(1, name='year')(year_prediction) # regression hence no activation function
+#
+#    type_prediction = layers.Dense(300, activation='relu', name='type_h')(MLT_shared_repr)
+#    type_prediction = layers.Dropout(0.5)(type_prediction)
+#    type_prediction = layers.Dense(nClassesType, activation='sigmoid', name='type')(type_prediction)
+#
+#    mat_prediction = layers.Dense(300, activation='relu', name='mat_h')(MLT_shared_repr)
+#    mat_prediction = layers.Dropout(0.5)(mat_prediction)
+#    mat_prediction = layers.Dense(nClassesMat, activation='sigmoid', name='mat')(mat_prediction)
 
     global custom_model
     custom_model = Model(base_model.input,[artist_prediction, year_prediction, type_prediction, mat_prediction])
@@ -288,9 +307,9 @@ def stringToList(text):
 
 ################# MAIN
     
-def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 512,  n_epochs = 40, batch_s = 20, img_s = 200, descr = 'No info'):
+def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 512,  n_epochs = 40, batch_s = 20, img_s = 200, dropout = 0.25, descr = 'No info'):
 
-    global dic_artist_weights, LOGS_FOLDER, MODEL_FOLDER, DIR_IMG, AWTable, artistsWeightTable, encoder_Artist, encoder_Type, encoder_Mat, year_scaler, nClassesArtist, nClassesType, nClassesMat, train_set, valid_set, test_set, NUM_EPOCHS, BATCH_SIZE, IMG_SIZE, MODEL_NAME, NUM_HIDDEN_UNITS, RUN_DESCR
+    global DROPOUT, dic_artist_weights, LOGS_FOLDER, MODEL_FOLDER, DIR_IMG, AWTable, artistsWeightTable, encoder_Artist, encoder_Type, encoder_Mat, year_scaler, nClassesArtist, nClassesType, nClassesMat, train_set, valid_set, test_set, NUM_EPOCHS, BATCH_SIZE, IMG_SIZE, MODEL_NAME, NUM_HIDDEN_UNITS, RUN_DESCR
 
     #DIR_IMG = '../../data/1_original/img/'
     DIR_IMG = '../../data/TOP100/original/' #must change to previous
@@ -303,6 +322,7 @@ def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 
     MODEL_NAME = model
     NUM_HIDDEN_UNITS = h_units
     RUN_DESCR = descr
+    DROPOUT = dropout
     
     datetime_object = datetime.datetime.now()
     LOGS_FOLDER = DIR_LOGS_BASE  + str(datetime_object.day) + '-' + str(datetime_object.month) + '_' + str(datetime_object.hour) + '.' + str(datetime_object.minute) + '_' + input_file + '_' + MODEL_NAME + str(h_units) + '_EPOCH' +  str(NUM_EPOCHS) + '_BS' + str(BATCH_SIZE) + '_IS'+ str(IMG_SIZE) + '/'
@@ -380,7 +400,7 @@ def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 
     dic_artist_weights = dict(enumerate(class_weights))
 
     #debugMetrics()
-    #debugDataGen()
+    debugDataGen()
 
     print("*****    2. Learning")
     learnModelMulti()
@@ -398,7 +418,7 @@ def debugDataGen():
     valid_gen = data_generator(valid_set, False)
     test_gen = data_generator(test_set, False)
     steps_per_epoch = ceil(valid_set.shape[0] / BATCH_SIZE)
-    (batch_image_t, dicto_t) = next(train_gen)
+ #   (batch_image_t, dicto_t) = next(train_gen)
     (batch_image, dicto, weights) = next(valid_gen)
     print('Artist weight')
     print(dicto.get('artist')[:,0])

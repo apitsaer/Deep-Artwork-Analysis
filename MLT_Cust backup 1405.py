@@ -11,11 +11,6 @@ import shutil
 import re
 import datetime
 
-from timeit import default_timer as timer
-from PIL import Image
-
-from DataGen_Cust import DataGenerator as CustDataGen
-
 import numpy as np
 import pandas as pd
 from random import shuffle
@@ -40,11 +35,10 @@ warnings.filterwarnings('ignore')
 
 import Utils_Cust as u
 import CustomMetrics as cm
-import DataGenFormer as dgf
 
 def ini(MODEL_NAME, LOGS_FOLDER=''):    
     
-    global nClassesArtist, nClassesType, nClassesMat, AWTable, AWTableTxt, artist_weights_matrix, artistsWeightTable, encoder_Artist, encoder_Type, encoder_Mat, year_scaler
+    global nClassesArtist, nClassesType, nClassesMat, AWTable, artist_weights_matrix, artistsWeightTable, encoder_Artist, encoder_Type, encoder_Mat, year_scaler
     
     #u.get_IMG_size_statistics(DIR)
     AWTable = pd.read_csv(DIR_METADATA + META_INPUT_FILE, keep_default_na=False)
@@ -56,22 +50,6 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     nClassesType = len(all_Types)
     nClassesMat = len(all_Mats)
         
-    # Weights for the accuracy and loos
-    artistsWeightTable = pd.DataFrame(AWTable['Artist'].value_counts(normalize=True))
-    artistsWeightTable.rename(columns={'Artist':'Count'}, inplace=True)
-    max_count = artistsWeightTable['Count'].max()
-    tot_count = artistsWeightTable['Count'].sum()    
-    artistsWeightTable['Weight_Acc'] = 1 / artistsWeightTable.Count / nClassesArtist
-    artistsWeightTable['Weight_Loss'] = max_count / (artistsWeightTable.Count + (max_count * W_SMOOTHING))
-        
-    AWTable.reset_index(inplace = True)
-    artistsWeightTable.reset_index(inplace = True)
-    artistsWeightTable.rename(columns={'index':'Artist'}, inplace=True)
-    AWTable = pd.merge(AWTable, artistsWeightTable, how='left', left_on='Artist', right_on='Artist')
-    AWTableTxt = AWTable.filter(['Id', 'Title_all', 'Description_all'], axis=1)
-    AWTableTxt.set_index('Id', inplace = True)
-    AWTable.drop(['Title_all', 'Description_all', 'Count'], axis=1, inplace=True)
-    AWTable.set_index('Id', inplace = True)
     # generating training, validation and test data sets with stratified shuffle split
     # using Artists as key attribute for the stratification        
     split = StratifiedShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
@@ -104,10 +82,18 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     year_scaler = MinMaxScaler(feature_range=(0, 1))
     year_scaler.fit(np.asarray(train_valid_years).reshape(-1,1))
 
-    # #########################
-    # OLD WEIGHT LOSS MATRIX
+    # generating weights to be used by the data generators for the accuracy
+    artistsFreqTable = AWTable['Artist'].value_counts(normalize=True)
+    artistsWeightTable = pd.DataFrame([artistsFreqTable]).transpose()
+    artistsWeightTable.rename(columns={'Artist':'Count', 'index':'Artist'}, inplace=True)
+    max_count = artistsWeightTable['Count'].max()
+    tot_count = artistsWeightTable['Count'].sum()    
+    artistsWeightTable['Weight_Acc'] = 1 / artistsWeightTable.Count / nClassesArtist
+    artistsWeightTable['Weight_Loss'] = max_count / (artistsWeightTable.Count + (max_count * W_SMOOTHING))
+
+    # new weight calculation for the loss
     #artistsCountTable = AWTable['Artist'].value_counts(normalize=False)
-    b = pd.DataFrame(AWTable['Artist'].value_counts(normalize=True))
+    b = pd.DataFrame([artistsFreqTable]).transpose()
     b.reset_index(inplace = True)
     b.rename(columns={'Artist':'Count', 'index':'Artist'}, inplace=True)
     max_count = b['Count'].max()
@@ -118,6 +104,7 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     b['Weight_Loss_Smoothed'] = max_count / (b.Count + (max_count * W_SMOOTHING))
     b.sort_values(by=['Artist'], inplace=True)
     artists_weights = np.array(b['Weight_Loss_Smoothed'])
+    
     # create matrix
     artist_weights_matrix = np.ones([nClassesArtist, nClassesArtist])
     #artist_weights_matrix = [[]]
@@ -129,8 +116,6 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
 
     # writing to log file
     if(LOGS_FOLDER != ''):
-        if os.path.exists(LOGS_FOLDER):
-            shutil.rmtree(LOGS_FOLDER)
         os.mkdir(LOGS_FOLDER)
         f = open(LOGS_FOLDER +  'Run_info.txt', 'a')
         msg1 = 'run description = \t{} \nMETA_INPUT_FILE = \t{} \nmodel = \t{} \nh_units = \t{} \nn_epochs = \t{} \nbatch_s = \t{} \nimg_s = \t{} \n'.format(RUN_DESCR, META_INPUT_FILE, MODEL_NAME, NUM_HIDDEN_UNITS, NUM_EPOCHS, BATCH_SIZE, IMG_SIZE)
@@ -139,7 +124,7 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
         msg1 +='{} Artists \n{} Types \n{} Mats \n'.format(nClassesArtist, nClassesType, nClassesMat)
         msg1 +='Crea. Year from {:.0f} \t to {:.0f} \t Average = {:.0f} \n'.format(AWTable['Year_Est'].min(), AWTable['Year_Est'].max(), AWTable['Year_Est'].mean())
         msg1 +='Size train = {} \t valid = {} \t test = {} \n\n'.format(train_set.shape[0], valid_set.shape[0], test_set.shape[0])
-        msg1 +='Min weight acc = {:2f} / Min weight acc = {:2f} \n'.format(artistsWeightTable['Weight_Acc'].min(), artistsWeightTable['Weight_Acc'].max())
+        msg1 +='Min weight acc = {:2f} / Min weight acc = {:2f}'.format(artistsWeightTable['Weight_Acc'].min(), artistsWeightTable['Weight_Acc'].max())
         msg1 +='Min weight loss = {:2f} / Min weight loss = {:2f} \n\n'.format(artistsWeightTable['Weight_Loss'].min(), artistsWeightTable['Weight_Loss'].max())
         print(msg1)    
         f.write(msg1)
@@ -236,14 +221,9 @@ def learnModelMulti(MODEL_FOLDER, MODEL_NAME, LOGS_FOLDER, train_set, valid_set)
                   loss_weights={'artist': artist_loss_weight, 'year': year_loss_weight, 'type': type_loss_weight, 'mat': mat_loss_weight},
                   metrics={'artist': [cm.accuracy_abs, cm.accuracy_w] , 'year': ['mae', mae_tol] , 'type': cm.precision, 'mat': cm.precision})
     
-    train_gen = CustDataGen(data_set = train_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAug = True, shuffle=True) 
-
-    valid_gen = CustDataGen(data_set = valid_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAug = False, shuffle=False) 
-
+    train_gen = data_generator(MODEL_NAME, train_set, dataAugm=True)
+    valid_gen = data_generator(MODEL_NAME, valid_set, dataAugm=False)
+    
     #callbacks = [keras.callbacks.TensorBoard(log_dir='../logs',histogram_freq=1]    
     #csv_logger = callbacks.CSVLogger(LOGS_FOLDER + MODEL_NAME +'.log')
 
@@ -254,16 +234,14 @@ def learnModelMulti(MODEL_FOLDER, MODEL_NAME, LOGS_FOLDER, train_set, valid_set)
     history = custom_model.fit_generator(train_gen, 
                         validation_data = valid_gen,  
                         validation_steps = ceil(valid_set.shape[0] / BATCH_SIZE),
-                        steps_per_epoch = ceil(train_set.shape[0] / BATCH_SIZE),
+                        steps_per_epoch = ceil(2 * train_set.shape[0] / BATCH_SIZE),
                         epochs = NUM_EPOCHS, verbose = 1,
                         callbacks = callbacks_list)
-                        #use_multiprocessing=True)
-                       # workers=3)
 
     print('***** Training logs saved as ' + LOGS_FOLDER + MODEL_NAME +'.log')
 
     #custom_model.save(LOGS_FOLDER + 'artistsRD.h5')
-    print('***** Model saved as ' + MODEL_FOLDER + MODEL_NAME + '.h5')
+    print('***** Model saved as artistsRD.h5')
  
 # evaluate on test set
 def testModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
@@ -271,15 +249,10 @@ def testModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
         K.set_learning_phase(0) # set model to inference / test mode manually (required for BN layers)
     #model = custom_model
     model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 'accuracy_w': cm.accuracy_w, 'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2), 'mae_tol': cm.mae_tol_param(0.15)})
-#    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
-
-    test_gen = CustDataGen(data_set = test_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAug = False, shuffle=False) 
-
+    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
 
     loss, artist_loss, year_loss, type_loss, mat_loss, artist_accuracy_abs, artist_accuracy_w, year_mean_absolute_error, year_mae_tol, type_precision, mat_precision = model.evaluate_generator(test_gen, 
-                                                                                  steps = ceil(test_set.shape[0]/BATCH_SIZE), verbose=1)
+                                                                                  steps = ceil(test_set.shape[0]/BATCH_SIZE))
 
     msg = '******\n'
     msg += 'total_loss = {:.2f}\n'.format(loss)
@@ -295,33 +268,24 @@ def testModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
     msg += 'test_mat_precision = {:.2%}\n'.format(mat_precision)
     print(msg)    
 
-    # if not logs foder specified, write to model folder only
-    # if logs folder specified, write to both logs and model folder
-    if(LOGS_FOLDER != ''):
-        f1 = open(LOGS_FOLDER +'Run_info.txt', 'a')
-        f1.write(msg)
-        f1.close()
-
-    f2 = open(MODEL_FOLDER +'test_info.txt', 'a')        
-    f2.write(msg)
-    f2.close()
+    if(LOGS_FOLDER == ''):
+        f = open(LOGS_FOLDER +'Run_info.txt', 'a')
+    else:
+        f = open(MODEL_FOLDER +'test_info.txt', 'a')        
+    f.write(msg)
+    f.close()
     
-# Save prediction on the test set
+# show some prediction
 def predictModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
     if(MODEL_NAME == 'Xception' or MODEL_NAME == 'RESNET'):
         K.set_learning_phase(0) # set model to inference / test mode manually (required for BN layers)
     #model = custom_model
     model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 'accuracy_w': cm.accuracy_w, 'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2), 'mae_tol': cm.mae_tol_param(0.15)})
-#    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
-
-    test_gen = CustDataGen(data_set = test_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAug = False, shuffle=False) 
-
-    predict_gen = model.predict_generator(test_gen, steps = ceil(test_set.shape[0]/BATCH_SIZE), verbose = 1)
+    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
+    predict_gen = model.predict_generator(test_gen, steps = ceil(test_set.shape[0]/BATCH_SIZE))
     predicted_years_list = year_scaler.inverse_transform(predict_gen[1])
     
-    predTable = pd.DataFrame(columns=['Id', 'Artist_Pred','Artist_Act','Artist_OK','Year_Pred', 'Year_Act', 'Year_Err', 'Type_Act', 'Material_Act', 'Weight_Acc', 'Weight_Loss', 'Title', 'Description'])
+    predTable = pd.DataFrame(columns=['Id', 'Artist_Pred','Artist_Act','Artist_OK','Year_Pred', 'Year_Act', 'Year_Err', 'Type_Act', 'Material_Act', 'Title', 'Description'])
     
     for index in range(len(predict_gen[0])):
         imgId = test_set.index[index]
@@ -332,29 +296,22 @@ def predictModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
         actual_artist = test_set.iloc[index].Artist
         predicted_artist = encoder_Artist.inverse_transform([predict_gen[0][index]])[0][0]
         acc_artist = (actual_artist == predicted_artist)
+#            artist_weight  = artistsWeightTable.loc[actual_artist].Weight
         actual_type = AWTable.loc[imgId].Type_all
         actual_mat = AWTable.loc[imgId].Material_all
-        artist_weight_acc  = AWTable.loc[imgId].Weight_Acc
-        artist_weight_loss  = AWTable.loc[imgId].Weight_Loss
-        title = AWTableTxt.loc[imgId].Title_all
-        description = AWTableTxt.loc[imgId].Description_all       
-        predTable.loc[index] = [imgId, predicted_artist, actual_artist, acc_artist, predicted_year, actual_year, err_year, actual_type, actual_mat, artist_weight_acc, artist_weight_loss, title, description]
+        title = AWTable.loc[imgId].Title_all
+        description = AWTable.loc[imgId].Description_all       
+        predTable.loc[index] = [imgId, predicted_artist, actual_artist, acc_artist, predicted_year, actual_year, err_year, actual_type, actual_mat, title, description]
    
     if(LOGS_FOLDER == ''):
         LOGS_FOLDER = MODEL_FOLDER
     predTable.to_csv(LOGS_FOLDER + 'Predictions.csv', index=False, encoding='utf8')
     print('***** Predictions on test set saved in ' + LOGS_FOLDER + 'Predictions.csv')
     
-    artist_true = np.array(predTable['Artist_Act'])
-    artist_pred = np.array(predTable['Artist_Pred'])
-    
-    u.save_confusion_matrix(DIR = LOGS_FOLDER, MODEL = MODEL_NAME, y_true = artist_true, y_pred = artist_pred)
-    u.save_CM_Table(DIR = LOGS_FOLDER, MODEL = MODEL_NAME, y_true = artist_true, y_pred = artist_pred)
-    print('***** Confusion matrix on test set saved in ' + LOGS_FOLDER )
 
 ################# MAIN
     
-def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 512,  n_epochs = 40, batch_s = 20, img_s = 200, dropout = 0.25, focal = True, weighting = True, w_smooth = 0.1, descr = 'No info'):
+def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 512,  n_epochs = 40, batch_s = 20, img_s = 200, dropout = 0.25, focal = True, weighting = True, w_smooth = 0.2, descr = 'No info'):
 
     global WEIGHTING, W_SMOOTHING, FOCAL, DROPOUT, META_INPUT_FILE, DIR_IMG, DIR_METADATA, NUM_EPOCHS, BATCH_SIZE, IMG_SIZE, NUM_HIDDEN_UNITS, RUN_DESCR
 
@@ -378,17 +335,17 @@ def MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 
     
     datetime_object = datetime.datetime.now()
     LOGS_FOLDER = DIR_LOGS_BASE  + str(datetime_object.day) + '-' + str(datetime_object.month) + '_' + str(datetime_object.hour) + '.' + str(datetime_object.minute) + '_' + META_INPUT_FILE + '_' + MODEL_NAME +'_Un' + str(h_units) + '_EPOCH' +  str(NUM_EPOCHS) + '_BS' + str(BATCH_SIZE) + '_IS'+ str(IMG_SIZE) + '/'
-    MODEL_FOLDER = MODEL_FOLDER_BASE + str(datetime_object.day) + '-' + str(datetime_object.month) + '_' + str(datetime_object.hour) + '.' + str(datetime_object.minute) +'_' + META_INPUT_FILE + '_' + MODEL_NAME + '_Un' +  str(h_units)  +  loss_descr + '/'
+    MODEL_FOLDER = MODEL_FOLDER_BASE +'_' + META_INPUT_FILE + '_' + MODEL_NAME + '_Un' +  str(h_units) + '_EPOCH' +  str(NUM_EPOCHS) + '_BS' + str(BATCH_SIZE) +  loss_descr + '/'
     
     if os.path.exists(MODEL_FOLDER):
         shutil.rmtree(MODEL_FOLDER)
     os.mkdir(MODEL_FOLDER)
+        
 
     print("*****    1. Generating data sets and initializing variables")
     (train_set, valid_set, test_set) = ini(MODEL_NAME, LOGS_FOLDER)
     
-#    debugDataGen(train_set, valid_set, test_set)
-#    debugDataGenCust(train_set, valid_set, test_set)
+    debugDataGen(train_set, valid_set, test_set)
 
     print("*****    2. Learning")
     learnModelMulti(MODEL_FOLDER, MODEL_NAME, LOGS_FOLDER, train_set, valid_set)
@@ -421,63 +378,138 @@ def MLT_test(input_file = 'AWTableTOP20.csv', model_foler = '../../models/', mod
     print("*****    3. Predicting on test set")
     predictModelMulti(MODEL_FOLDER, MODEL_NAME, test_set)    
 
+# Custom data generator to provide batch of labelized data
+def data_generator(MODEL_NAME, data_set, dataAugm=False):
+    
+  
+    from timeit import default_timer as timer
+    #import cv2
+       
+    iBatch = 0
+    steps_per_epoch = ceil(data_set.shape[0] / BATCH_SIZE)
+    
+    start_batch = timer()
+
+     
+    while True:
+ 
+        batch_Id = data_set.iloc[iBatch * BATCH_SIZE : (iBatch+1) * BATCH_SIZE].index
+
+        #batch_image = []
+        batch_image = np.empty((BATCH_SIZE, 224, 224, 3), dtype=np.float32)
+        batch_target_artist = [] 
+        batch_artist_weight_acc = []
+        batch_artist_weight_loss = []
+        batch_target_year = []
+        batch_target_type = []
+        batch_target_mat = []
+        
+        count = 0
+
+        for Id in batch_Id:
+
+            artist = AWTable.loc[Id].Artist
+            artist_weight_acc  = artistsWeightTable.loc[artist].Weight_Acc
+            artist_weight_loss  = artistsWeightTable.loc[artist].Weight_Loss
+            year = AWTable.loc[Id].Year_Est
+            types = AWTable.loc[Id].Type_all
+            mats = AWTable.loc[Id].Material_all
+            
+            batch_target_artist.append(artist)
+            batch_artist_weight_acc.append(artist_weight_acc)
+            batch_artist_weight_loss.append(artist_weight_loss)
+            batch_target_year.append(year)
+            batch_target_type.append(stringToList(types))
+            batch_target_mat.append(stringToList(mats))
+            path = os.path.join(DIR_IMG, Id +".jpg")
+             
+            img = image.load_img(path)
+            img = image.img_to_array(img)
+            
+            # apply model specific pre-processing
+            if(MODEL_NAME == 'RESNET'):    
+                img_prepro = applications.resnet50.preprocess_input(img)
+            elif(MODEL_NAME == 'Xception'):
+                img_prepro = applications.xception.preprocess_input(img)
+            else:
+                img_prepro = applications.vgg16.preprocess_input(img)
+
+            batch_image[count, ...] = img_prepro
+            count += 1
+            
+            if(dataAugm):
+                # Basic Data Augmentation - Horizontal Flipping
+                flip_img_prepro = np.fliplr(img_prepro)
+                # apply model specific pre-processing
+                #if(MODEL_NAME == 'RESNET'):   flip_img_prepro = applications.resnet50.preprocess_input(flip_img)
+                #if(MODEL_NAME == 'Xception'):    flip_img_prepro = applications.xception.preprocess_input(flip_img)
+                #else: flip_img_prepro = applications.vgg16.preprocess_input(flip_img)
+                
+                batch_image.append(np.array(flip_img_prepro))
+                  
+                # test - save img
+                #matplotlib.image.imsave('../../test/img/' + Id + '_' + artist +'_' + str(year) +'_resized.jpg', img_prepro)
+                # test - save img
+                #matplotlib.image.imsave('../../test/img/' + Id + '_' + artist +'_' +  str(year) +'_resized_flipped.jpg', flip_img_prepro)
+                
+                batch_target_artist.append(artist)
+                batch_artist_weight_acc.append(artist_weight_acc)
+                batch_artist_weight_loss.append(artist_weight_loss)
+                batch_target_year.append(year)
+                batch_target_type.append(stringToList(types))
+                batch_target_mat.append(stringToList(mats))
+
+        #batch_image = np.array( batch_image) # / 255 # remove if using model pre-processing
+          
+        batch_target_artist = np.array( batch_target_artist ).reshape(-1,1)
+        batch_target_artist = encoder_Artist.transform(batch_target_artist)
+        batch_artist_weight_acc = np.array( batch_artist_weight_acc).reshape(-1,1)
+        batch_artist_weight_loss = np.array( batch_artist_weight_loss).reshape(-1,1)
+        # batch_artist is concatenation of artist weight (first column) and artist values one hot encoded (remaining columns)
+        batch_artist = np.append(batch_artist_weight_acc, batch_artist_weight_loss, axis = 1)
+        batch_artist = np.append(batch_artist, batch_target_artist, axis = 1)
+        
+        batch_target_type = encoder_Type.transform(batch_target_type)
+        batch_target_mat = encoder_Mat.transform(batch_target_mat)          
+        batch_target_year = np.array( batch_target_year ).reshape(-1,1)
+        batch_target_year = year_scaler.transform(batch_target_year)
+          
+        endtransorm = timer()
+        print('batch in sec = {:2f} \n\n'.format(endtransorm - start_batch)) # Time in seconds, e.g. 5.38091952400282
+        
+        yield(batch_image, {'artist': batch_artist, 'year': batch_target_year,'type': batch_target_type, 'mat': batch_target_mat} )
+        iBatch += 1
+        if(iBatch == steps_per_epoch): iBatch = 0 
+                
+def stringToList(text):
+    types = []
+    text_type = re.split(";", text)
+    for typ in text_type:
+        if not typ == '':
+            types.append(typ)  
+    return types
+    
     
 def debugDataGen(train_set, valid_set, test_set):
         # ======== CODE to DEBUG the generator =======================================
+    train_gen = data_generator('RESNET',  train_set)
+    valid_gen = data_generator('RESNET', valid_set)
+    test_gen = data_generator('RESNET', test_set)
+    steps_per_epoch = ceil(valid_set.shape[0] / BATCH_SIZE)
+    (batch_image, dicto) = next(train_gen)
     
-    BATCH_SIZE = 50
-    
-    train_gen = dgf.data_generator(MODEL_NAME='RESNET',  data_set = train_set,  dir_img=DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAugm=True)
-    
-    start_batch = timer()
-    steps_per_epoch = ceil(train_set.shape[0] / BATCH_SIZE)
-    
-    for i in range(steps_per_epoch):
-            print('Step {}'.format(i))
-            (batch_image, dicto) = next(train_gen)
+    print('Artist weight')
+    print(dicto.get('artist')[:,0])
+    print('Artist attribu')
+    print(dicto.get('artist')[:,1:])    
+    (batch_image, dicto) = next(train_gen)
+    print('Artist weight')
+    print(dicto.get('artist')[:,0])
+    print('Artist attribu')
+    print(dicto.get('artist')[:,1:])    
 
-    end_batch = timer()
-    print('Former DG with {} steps'.format(steps_per_epoch))
-    print('Former DG: Avg batch in sec = {:2f} \n'.format((end_batch - start_batch)/steps_per_epoch)) # Time in seconds, e.g. 5.38091952400282
-    
-def debugDataGenCust(train_set, valid_set, test_set):
-        # ======== CODE to DEBUG the generator =======================================
 
-    BATCH_SIZE = 50
-
-    train_gen = CustDataGen(data_set = train_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
-                            encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
-                            batch_size=BATCH_SIZE, dataAug = True, shuffle=True) 
-
-    start_batch = timer()
-    
-    for i in range(train_gen.__len__()):
-            print('Step {}'.format(i))
-            (batch_image, dicto) = train_gen.__getitem__(i)
-
-    end_batch = timer()
-
-    print('Cust DG with {} steps'.format(train_gen.__len__()))
-    print('Cust DG: Avg batch in sec = {:2f}'.format((end_batch - start_batch)/train_gen.__len__()))
-
-#    print('Cust DG with {} setps'.format(train_gen.__len__()) # Time in seconds, e.g. 5.38091952400282
-#    l = train_gen.__len__()
-#    avgTime = end_batch - start_batch 
-#    print('Avg batch in sec = {:2f} \n'.format( avgTime ) # Time in seconds, e.g. 5.38091952400282
-
-#    print('Artist weight')
-#    print(dicto.get('artist')[:,0])
-#    print('Artist attribu')
-#    print(dicto.get('artist')[:,1:])    
-#    (batch_image, dicto) = next(train_gen)
-#    print('Artist weight')
-#    print(dicto.get('artist')[:,0])
-#    print('Artist attribu')
-#    print(dicto.get('artist')[:,1:])    
-
-#MLT_learn_test(input_file = 'AWTableTOP100.csv', model = 'RESNET', h_units = 1500,  n_epochs = 1, batch_s = 50, img_s = 224, dropout = 0.25, focal = False, weighting = False, w_smooth = 0.08,  descr = 'rmsprop  no weights, 1 dropout 0.25 + no L2 reg artist + no year')
+MLT_learn_test(input_file = 'AWTableSetA.csv', model = 'RESNET', h_units = 1500,  n_epochs = 40, batch_s = 10, img_s = 224, dropout = 0.25, focal = False, weighting = False, w_smooth = 0.2,  descr = 'rmsprop  no weights, 1 dropout 0.25 + no L2 reg artist + no year')
 #MLT_test(input_file = 'AWTableTOP100.csv', model_foler = '../../models/', model = 'RESNET')
 
 # To DO 

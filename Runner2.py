@@ -6,22 +6,15 @@ Created on Fri Apr 26 14:33:55 2019
 @author: admin
 """
 
-from MLT_Cust import MLT_learn_test
 
+import os
 
-MLT_learn_test(input_file = 'AWTableSetAL.csv', model = 'RESNET', h_units = 768,  n_epochs = 1, batch_s = 50, img_s = 224, descr = 'test adam custom matrix weight')
-MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'RESNET', h_units = 3000,  n_epochs = 50, batch_s = 50, img_s = 224, descr = 'adam custom matrix weight, 1 task + multiple dropout')
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"; 
+## The GPU id to use, usually either "0" or "1";
+os.environ["CUDA_VISIBLE_DEVICES"]="3"; 
 
+from MLT_Cust import MLT_learn_test, MLT_test
 
-#MLT_learn_test(input_file = 'AWTableSetA.csv', model = 'RESNET', h_units = 768,  n_epochs = 1, batch_s = 50, img_s = 224, descr = 'adam custom matrix weight, year scaled + tol of 0.1')
-#MLT_learn_test(input_file = 'AWTableTOP100.csv', model = 'RESNET', h_units = 2000,  n_epochs = 25, batch_s = 50, img_s = 224, descr = 'adam custom matrix weight, year scaled')
+MLT_test(input_file = 'AWTableTOP100.csv', model_foler = '../../models/15-5_16.6_AWTableTOP100.csv_RESNET_Un5000_FOCALTrue_WEIGHTINGTrue_WS0.2/', model = 'RESNET', w_smooth = 0.2, batch_size = 100)
 
-#MLT_learn_test(input_file = 'AWTableTOP100.csv', model = 'RESNET', h_units = 4096,  n_epochs = 60, batch_s = 50, img_s = 224, descr = 'with MLT Cust. and categorical_crossentropy_abs')
-#MLT_learn_test(input_file = 'AWTableTOP100.csv', model = 'RESNET', h_units = 2048,  n_epochs = 60, batch_s = 50, img_s = 224, descr = 'with MLT Cust. and categorical_crossentropy_abs')
-##MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'VGG', h_units = 64,  n_epochs = 40, batch_s = 50, img_s = 200)
-#MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'VGG', h_units = 96,  n_epochs = 40, batch_s = 50, img_s = 200)
-#MLT_learn_test(input_file = 'AWTableTOP20.csv', model = 'VGG', h_units = 128,  n_epochs = 40, batch_s = 50, img_s = 200)
-
-
-
-
+#MLT_learn_test(input_file = 'AWTableTOP100.csv', model = 'RESNET', h_units = 5000,  n_epochs = 80, batch_s = 100, img_s = 224, dropout = 0.5, focal = True, weighting = True, w_smooth = 0.2, descr = 'BN + adam  focal loss + smoothed weight, 1 dropout 0.5 + L2 reg artist + no year')
