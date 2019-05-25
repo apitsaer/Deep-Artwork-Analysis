@@ -93,17 +93,50 @@ def w_categorical_focal_loss(gamma=2., alpha=.25):
         return K.sum(loss, axis=1) * weights
     return w_categorical_focal_loss_fixed
 
-# matrix one
-def w_categorical_crossentropy(y_true, y_pred, weights):
+def w_categorical_crossentropy(y_true, y_pred):
+    weights = y_true[:,1]    
     y_true = y_true [:,2:]
-    nb_cl = len(weights)
-    final_mask = K.zeros_like(y_pred[:, 0])
-    y_pred_max = K.max(y_pred, axis=1)
-    y_pred_max = K.expand_dims(y_pred_max, 1)
-    y_pred_max_mat = K.equal(y_pred, y_pred_max)
-    for c_p, c_t in product(range(nb_cl), range(nb_cl)):
-        final_mask += (K.cast(weights[c_t, c_p],K.floatx()) * K.cast(y_pred_max_mat[:, c_p] ,K.floatx())* K.cast(y_true[:, c_t],K.floatx()))
-    return K.categorical_crossentropy(y_true, y_pred) * final_mask
+
+    # Scale predictions so that the class probas of each sample sum to 1
+    y_pred /= K.sum(y_pred, axis=-1, keepdims=True)
+
+    # Clip the prediction value to prevent NaN's and Inf's
+    epsilon = K.epsilon()
+    y_pred = K.clip(y_pred, epsilon, 1. - epsilon)
+
+    # Calculate Cross Entropy
+    cross_entropy = -y_true * K.log(y_pred)
+
+    # Calculate Focal Loss
+    loss = K.sum(cross_entropy, axis=1)
+
+    # Sum the losses in mini_batch
+    return loss * weights
+
+# matrix one
+def w_categorical_crossentropy_matrix(weights):
+    def w_categorical_crossentropy_fixed(y_true, y_pred):
+        y_true = y_true [:,2:]
+        nb_cl = len(weights)
+        final_mask = K.zeros_like(y_pred[:, 0])
+        y_pred_max = K.max(y_pred, axis=1)
+        y_pred_max = K.expand_dims(y_pred_max, 1)
+        y_pred_max_mat = K.equal(y_pred, y_pred_max)
+        for c_p, c_t in product(range(nb_cl), range(nb_cl)):
+            final_mask += (K.cast(weights[c_t, c_p],K.floatx()) * K.cast(y_pred_max_mat[:, c_p] ,K.floatx())* K.cast(y_true[:, c_t],K.floatx()))
+        return K.categorical_crossentropy(y_true, y_pred) * final_mask
+    return w_categorical_crossentropy_fixed
+
+#def w_categorical_crossentropy(y_true, y_pred, weights):
+#    y_true = y_true [:,2:]
+#    nb_cl = len(weights)
+#    final_mask = K.zeros_like(y_pred[:, 0])
+#    y_pred_max = K.max(y_pred, axis=1)
+#    y_pred_max = K.expand_dims(y_pred_max, 1)
+#    y_pred_max_mat = K.equal(y_pred, y_pred_max)
+#    for c_p, c_t in product(range(nb_cl), range(nb_cl)):
+#        final_mask += (K.cast(weights[c_t, c_p],K.floatx()) * K.cast(y_pred_max_mat[:, c_p] ,K.floatx())* K.cast(y_true[:, c_t],K.floatx()))
+#    return K.categorical_crossentropy(y_true, y_pred) * final_mask
 
 #########################
 
@@ -305,12 +338,14 @@ def tests():
     np.testing.assert_almost_equal(loss_abs1,loss_abs3)
     
     artist_weights_matrix = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
-    loss_artits_wrap = categorical_crossentropy_w_wrap(artist_weights_matrix)
-    loss_w1a = loss_artits_wrap(y_true_w,y_pred_s).eval(session=K.get_session())
+    loss_artits_matr = w_categorical_crossentropy_matrix(artist_weights_matrix)
+    loss_w1a = loss_artits_matr(y_true_w,y_pred_s).eval(session=K.get_session())
     np.testing.assert_almost_equal(loss_abs1,loss_w1a)
 
-    loss_artist_wb = lambda y_true, y_pred: w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix)
-    loss_w1b = loss_artist_wb(y_true_w,y_pred_s).eval(session=K.get_session())
+#    loss_artist_wb = lambda y_true, y_pred: w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix)
+#    loss_w1b = loss_artist_wb(y_true_w,y_pred_s).eval(session=K.get_session())
+
+    loss_w1b = w_categorical_crossentropy(y_true_w,y_pred_s).eval(session=K.get_session())
     np.testing.assert_almost_equal(loss_abs1,loss_w1b)
 
     loss_w1c = w_categorical_focal_loss(gamma=0, alpha=1)(y_true_w,y_pred_s).eval(session=K.get_session())
@@ -326,18 +361,22 @@ def tests():
     loss_w2a = loss_artits_w_2(y_true_w,y_pred_s).eval(session=K.get_session())
     loss_abs2 = categorical_crossentropy_abs(y_true_w,y_pred_s).eval(session=K.get_session())
     
-    loss_artits_wb = lambda y_true, y_pred: w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix_2)
+    loss_artits_wb = w_categorical_crossentropy_matrix(artist_weights_matrix_2)
+    #loss_artits_wb = lambda y_true, y_pred: w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix_2)
     loss_w2b = loss_artits_wb(y_true_w,y_pred_s).eval(session=K.get_session())
     np.testing.assert_almost_equal(loss_w2a,loss_w2b)
     
-    loss_w2c = w_categorical_focal_loss(gamma=0, alpha=1)(y_true_w,y_pred_s).eval(session=K.get_session())
+    loss_w2c = w_categorical_crossentropy(y_true_w,y_pred_s).eval(session=K.get_session())
     np.testing.assert_almost_equal(loss_w2b,loss_w2c)
 
+    loss_w2d = w_categorical_focal_loss(gamma=0, alpha=1)(y_true_w,y_pred_s).eval(session=K.get_session())
+    np.testing.assert_almost_equal(loss_w2b,loss_w2d)
+
     # non-weighted focal loss with default param
-    loss_w2d = categorical_focal_loss(gamma=2, alpha=.25)(y_true_w,y_pred_s).eval(session=K.get_session())
+    loss_w2e = categorical_focal_loss(gamma=2, alpha=.25)(y_true_w,y_pred_s).eval(session=K.get_session())
 
     # weighted focal loss with default param
-    loss_w2e = w_categorical_focal_loss(gamma=2, alpha=.25)(y_true_w,y_pred_s).eval(session=K.get_session())
+    loss_w2f = w_categorical_focal_loss(gamma=2, alpha=.25)(y_true_w,y_pred_s).eval(session=K.get_session())
     print('done')
     
 #tests()

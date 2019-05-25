@@ -56,7 +56,7 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     nClassesType = len(all_Types)
     nClassesMat = len(all_Mats)
         
-    # Weights for the accuracy and loos
+    # Weights for the accuracy and loss
     artistsWeightTable = pd.DataFrame(AWTable['Artist'].value_counts(normalize=True))
     artistsWeightTable.rename(columns={'Artist':'Count'}, inplace=True)
     max_count = artistsWeightTable['Count'].max()
@@ -72,6 +72,7 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     AWTableTxt.set_index('Id', inplace = True)
     AWTable.drop(['Title_all', 'Description_all', 'Count'], axis=1, inplace=True)
     AWTable.set_index('Id', inplace = True)
+    
     # generating training, validation and test data sets with stratified shuffle split
     # using Artists as key attribute for the stratification        
     split = StratifiedShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
@@ -120,10 +121,7 @@ def ini(MODEL_NAME, LOGS_FOLDER=''):
     artists_weights = np.array(b['Weight_Loss_Smoothed'])
     # create matrix
     artist_weights_matrix = np.ones([nClassesArtist, nClassesArtist])
-    #artist_weights_matrix = [[]]
     for c_p, c_t in product(range(nClassesArtist), range(nClassesArtist)):
-        #if(c_p != c_t):
-        #if(WEIGHTING != 'NO'):
         artist_weights_matrix[c_t, c_p] = artists_weights[c_t]       
     # #########################
 
@@ -227,7 +225,8 @@ def learnModelMulti(MODEL_FOLDER, MODEL_NAME, LOGS_FOLDER, train_set, valid_set)
     elif (FOCAL and not WEIGHTING):
         artistLoss = cm.categorical_focal_loss(alpha=1, gamma=2)
     elif (not FOCAL and WEIGHTING):
-        artistLoss = lambda y_true, y_pred: cm.w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix)
+        #artistLoss = lambda y_true, y_pred: cm.w_categorical_crossentropy(y_true, y_pred, weights=artist_weights_matrix)
+        artistLoss =  cm.w_categorical_crossentropy
     elif (not FOCAL and not WEIGHTING):
         artistLoss = cm.categorical_crossentropy_abs
 
@@ -257,26 +256,31 @@ def learnModelMulti(MODEL_FOLDER, MODEL_NAME, LOGS_FOLDER, train_set, valid_set)
                         steps_per_epoch = ceil(train_set.shape[0] / BATCH_SIZE),
                         epochs = NUM_EPOCHS, verbose = 1,
                         callbacks = callbacks_list)
-                        #use_multiprocessing=True)
-                       # workers=3)
+                        #use_multiprocessing=True,
+                        #workers=3)
 
     print('***** Training logs saved as ' + LOGS_FOLDER + MODEL_NAME +'.log')
 
-    #custom_model.save(LOGS_FOLDER + 'artistsRD.h5')
+    #custom_model.save(MODEL_FOLDER + MODEL_NAME + '_last.h5')
     print('***** Model saved as ' + MODEL_FOLDER + MODEL_NAME + '.h5')
  
 # evaluate on test set
 def testModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
     if(MODEL_NAME == 'Xception' or MODEL_NAME == 'RESNET'):
         K.set_learning_phase(0) # set model to inference / test mode manually (required for BN layers)
-    #model = custom_model
-    model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 'accuracy_w': cm.accuracy_w, 'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2), 'mae_tol': cm.mae_tol_param(0.15)})
-#    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
+#    model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 'accuracy_w': cm.accuracy_w, 'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2), 'categorical_crossentropy_abs':cm.categorical_crossentropy_abs, 'mae_tol': cm.mae_tol_param(0.15)})
+
+    model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 
+                                                                          'accuracy_w': cm.accuracy_w,  
+                                                                          'categorical_crossentropy_abs':cm.categorical_crossentropy_abs, 
+                                                                          'w_categorical_crossentropy':cm.w_categorical_crossentropy, 
+                                                                          'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 
+                                                                          'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2),
+                                                                          'mae_tol': cm.mae_tol_param(0.15)})
 
     test_gen = CustDataGen(data_set = test_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
                             encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
                             batch_size=BATCH_SIZE, dataAug = False, shuffle=False) 
-
 
     loss, artist_loss, year_loss, type_loss, mat_loss, artist_accuracy_abs, artist_accuracy_w, year_mean_absolute_error, year_mae_tol, type_precision, mat_precision = model.evaluate_generator(test_gen, 
                                                                                   steps = ceil(test_set.shape[0]/BATCH_SIZE), verbose=1)
@@ -311,8 +315,15 @@ def predictModelMulti(MODEL_FOLDER, MODEL_NAME, test_set, LOGS_FOLDER=''):
     if(MODEL_NAME == 'Xception' or MODEL_NAME == 'RESNET'):
         K.set_learning_phase(0) # set model to inference / test mode manually (required for BN layers)
     #model = custom_model
-    model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 'accuracy_w': cm.accuracy_w, 'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2), 'mae_tol': cm.mae_tol_param(0.15)})
 #    test_gen = data_generator(MODEL_NAME, test_set, dataAugm=False)    
+
+    model = load_model(MODEL_FOLDER + MODEL_NAME + '.h5', custom_objects={'precision': cm.precision, 'accuracy_abs': cm.accuracy_abs, 
+                                                                          'accuracy_w': cm.accuracy_w,  
+                                                                          'categorical_crossentropy_abs': cm.categorical_crossentropy_abs, 
+                                                                          'w_categorical_crossentropy': cm.w_categorical_crossentropy, 
+                                                                          'categorical_focal_loss_fixed': cm.categorical_focal_loss(alpha=.25, gamma=2), 
+                                                                          'w_categorical_focal_loss_fixed': cm.w_categorical_focal_loss(alpha=.25, gamma=2),
+                                                                          'mae_tol': cm.mae_tol_param(0.15)})
 
     test_gen = CustDataGen(data_set = test_set, dir_img = DIR_IMG, encoder_Artist=encoder_Artist, 
                             encoder_Type=encoder_Type, encoder_Mat=encoder_Mat, year_scaler=year_scaler,
